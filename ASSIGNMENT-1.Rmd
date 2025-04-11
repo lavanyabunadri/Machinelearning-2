@@ -1,0 +1,681 @@
+---
+title: "ASSIGNMENT-1"
+author: "LAVANYA B"
+output: html_document
+---
+
+```{r}
+#Loading the youth data from local
+youth_data=load("C:/Users/bunad/OneDrive/Desktop/Spring 2025/ML2/youth_data.Rdata")
+youth_data=df
+```
+
+
+```{r}
+#To Remove missing values
+cleaned_youth_data=na.omit(youth_data)
+
+```
+
+##BINARY CLASSIFICATION:
+
+```{r}
+#selected feature and target variables
+cleaned_youth_data_subset=df[,c(demographic_cols,youth_experience_cols,'alcflag')]
+
+#To split the data into training and testing
+train=sample(1:nrow(cleaned_youth_data_subset),0.7*nrow(cleaned_youth_data_subset))
+training_data_binary=cleaned_youth_data_subset[train,]
+testing_data_binary=cleaned_youth_data_subset[-train, ]
+```
+
+```{r}
+#To perform decision tree on training data
+library(tree)
+binary_tree=tree(alcflag~.,data=training_data_binary)
+#Plotting tree
+plot(binary_tree)
+text(binary_tree,pretty = 0)
+binary_tree
+
+```
+
+```{r}
+#predict on test data
+predict_binary=predict(binary_tree,testing_data_binary,type='class')
+table(predict_binary,testing_data_binary$alcflag)
+#accuracy calculating
+decision_mse=mean(predict_binary==testing_data_binary$alcflag)
+decision_mse
+```
+
+```{r}
+# Performing cross-validation to choose optimal tree size
+cv_binary=cv.tree(binary_tree,FUN=prune.misclass)
+names(cv_binary)
+cv_binary
+                  
+```
+
+```{r}
+# Ploting error,tree size and complexity
+par(mfrow = c(1, 2))
+plot(cv_binary$size, cv_binary$dev, type = "b")
+plot(cv_binary$k, cv_binary$dev, type = "b")
+
+```
+
+```{r}
+# Pruning tree to optimal size
+prune_binary <- prune.misclass(binary_tree, best = 5)
+plot(prune_binary)
+text(prune_binary, pretty = 0)
+prune_binary
+```
+
+```{r}
+
+prune_binary_prediction = predict(prune_binary, testing_data_binary,type = "class")
+table(prune_binary_prediction, testing_data_binary$alcflag)
+pruned_mse=mean(prune_binary_prediction == testing_data_binary$alcflag)
+pruned_mse
+
+```
+```{r}
+missing_values=colSums(is.na(training_data_binary))
+missing_values
+```
+
+
+# Bagging
+
+```{r}
+library(randomForest)
+# Training bagging model
+training_data_binary_clean=na.omit(training_data_binary)
+bagging_binary <- randomForest(alcflag ~ ., data = training_data_binary_clean,
+     mtry = floor(sqrt(ncol(training_data_binary_clean))), importance = TRUE)
+bagging_binary
+
+```
+
+```{r}
+#Performing prediction
+bagging_binary_prediction = predict(bagging_binary, newdata = testing_data_binary, type = "class")
+table(bagging_binary_prediction,testing_data_binary$alcflag)
+bag_mse=mean(bagging_binary_prediction== testing_data_binary$alcflag,na.rm=TRUE)
+bag_mse
+```
+
+```{r}
+#finding importance variable in bagging
+importance_bagging_binary <- importance(bagging_binary)
+top_10 <- head(importance_bagging_binary, 10)
+top_10
+varImpPlot(bagging_binary, n.var = 10, sort = TRUE, main = "Important variables of binary classification(Top 10)")
+
+```
+
+
+#Random Forest
+
+```{r}
+
+set.seed(1)
+randomforest_binary <- randomForest(alcflag ~ ., data = training_data_binary_clean, mtry = sqrt(ncol(training_data_binary_clean)), ntree = 500, importance = TRUE)
+randomforest_binary
+
+```
+
+```{r}
+yhat_randomforest_binary <- predict(randomforest_binary, newdata = testing_data_binary,type='class')
+rf_mse=mean(yhat_randomforest_binary == testing_data_binary$alcflag,na.rm=TRUE)
+rf_mse
+```
+
+```{r}
+importance_rf_binary <- importance(randomforest_binary)
+top_10 <- head(importance_rf_binary, 10)
+top_10
+varImpPlot(randomforest_binary, n.var = 10, sort = TRUE, main = "Important variables of binary classification(Top 10)")
+
+```
+
+#Boosting
+
+```{r}
+
+library(gbm)
+
+# Converting alcflag to numeric
+training_data_binary_clean$alcflag_numeric <- ifelse(training_data_binary_clean$alcflag == "Yes", 1, 0)
+testing_data_binary$alcflag_numeric <- ifelse(testing_data_binary$alcflag == "Yes", 1, 0)
+
+#Using different shrinkage and depth values
+shrinkage_values <- c(0.01, 0.1, 0.2)
+depth_values <- c(1, 2)
+
+boosting_results <- list()
+
+for (shrink in shrinkage_values) {
+  for (depth in depth_values) {
+    set.seed(1)
+#perfoming boosting 
+    model <- gbm(alcflag_numeric ~ .,
+                 data = training_data_binary_clean,
+                 distribution = "bernoulli",
+                 n.trees = 5000,
+                 interaction.depth = depth,
+                 shrinkage = shrink,
+                 verbose = FALSE)
+    
+
+    preds <- predict(model, newdata = testing_data_binary, n.trees = 5000, type = "response")
+    pred_class <- ifelse(preds > 0.5, 1, 0)
+ #Calculating accuracy 
+    accuracy <- mean(pred_class == testing_data_binary$alcflag_numeric, na.rm = TRUE)
+    
+    model_name <- paste0("shrink_", shrink, "_depth_", depth)
+    boosting_results[[model_name]] <- list(
+      model = model,
+      shrinkage = shrink,
+      depth = depth,
+      accuracy = accuracy
+    )
+  }
+}
+
+#To Print the results
+for (name in names(boosting_results)) {
+  cat(name, "-> Accuracy:", boosting_results[[name]]$accuracy, "\n")
+}
+
+```
+
+```{r}
+# Plotting accuracy comparison across models for Binary classification
+library(ggplot2)
+
+best_boosting_name <- names(boosting_results)[which.max(sapply(boosting_results, function(x) x$accuracy))]
+best_boosting_acc <- boosting_results[[best_boosting_name]]$accuracy
+
+accuracy_df <- data.frame(
+  Model = c("Decision Tree", "Pruned Tree", "Bagging", "Random Forest", paste("Boosting (", best_boosting_name, ")", sep = "")),
+  Accuracy = c(decision_mse, pruned_mse, bag_mse, rf_mse, best_boosting_acc)
+)
+
+ggplot(accuracy_df, aes(x = reorder(Model, Accuracy), y = Accuracy, fill = Model)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = round(Accuracy, 4)), vjust = -0.3, size = 4.5) +
+  labs(title = "Accuracy Comparison Binary Classification",
+       x = "Model",
+       y = "Accuracy") +
+  theme_minimal() +theme(legend.position = "none")
+
+```
+
+##MULTI-CLASS CLASSIFICATION
+
+
+```{r}
+#To perfom multi class classification 
+cleaned_youth_data_subset_multi=df[,c(demographic_cols,youth_experience_cols,'alcydays')]
+
+#converting as factors alcydays
+cleaned_youth_data_subset_multi$alcydays <- as.factor(cleaned_youth_data_subset_multi$alcydays)
+length(cleaned_youth_data_subset_multi)
+#To train the model
+train=sample(1:nrow(cleaned_youth_data_subset_multi),0.7*nrow(cleaned_youth_data_subset_multi))
+training_data_multi=cleaned_youth_data_subset_multi[train,]
+testing_data_multi=cleaned_youth_data_subset_multi[-train,]
+     
+```
+
+```{r}
+library(tree)
+library(randomForest)
+multi_tree <- tree(alcydays ~.,training_data_multi)
+multi_tree
+
+```
+
+```{r}
+summary(multi_tree)
+
+```
+
+```{r}
+plot(multi_tree)
+text(multi_tree, pretty = 0)
+```
+
+```{r}
+#Predicting on test data
+predict_multi <- predict(multi_tree, testing_data_multi, type = 'class')
+table(predict_multi, testing_data_multi$alcydays)
+```
+
+```{r}
+#Calculating accuracy
+multi_mse= mean(predict_multi == testing_data_multi$alcydays)
+multi_mse
+```
+
+```{r}
+#Perfoming cross validation
+cv_multi=cv.tree(multi_tree,FUN=prune.misclass)
+names(cv_multi)
+cv_multi
+```
+
+
+```{r}
+#Plotting
+par(mfrow = c(1, 2))
+plot(cv_multi$size, cv_multi$dev, type = "b")
+plot(cv_multi$k, cv_multi$dev, type = "b")
+
+```
+
+```{r}
+plot(cv_multi)
+```
+
+```{r}
+#Pruning the multi class classification
+prune_multi <- prune.misclass(multi_tree, best = 3)
+plot(prune_multi)
+text(prune_multi, pretty = 0)
+prune_multi
+```
+
+```{r}
+prune_multi_prediction = predict(prune_multi, testing_data_multi,type = "class")
+table(prune_multi_prediction, testing_data_multi$alcydays)
+multi_pruned_mse=mean(prune_multi_prediction == testing_data_multi$alcydays)
+multi_pruned_mse
+```
+
+# Bagging
+
+```{r}
+training_data_multi_clean <- na.omit(training_data_multi)
+training_data_multi_clean$alcydays <- droplevels(training_data_multi_clean$alcydays)
+
+bagging_multi <- randomForest(alcydays ~ ., 
+                              data = training_data_multi_clean,
+                              mtry = floor(sqrt(ncol(training_data_multi_clean))), 
+                              importance = TRUE)
+bagging_multi
+
+```
+
+
+```{r}
+# Performing Factor levels of alcydays in testing data to training data
+testing_data_multi$alcydays <- factor(testing_data_multi$alcydays, 
+                                      levels = levels(training_data_multi_clean$alcydays))
+
+# predicting and evaluate
+bagging_multi_prediction <- predict(bagging_multi, newdata = testing_data_multi, type = "class")
+table(bagging_multi_prediction, testing_data_multi$alcydays)
+multi_bag_mse=mean(bagging_multi_prediction == testing_data_multi$alcydays, na.rm = TRUE)
+multi_bag_mse
+
+
+```
+
+```{r}
+#Important variable in bagging
+importance_bagging_multi <- importance(bagging_multi)
+top_10 <- head(importance_bagging_multi, 10)
+top_10
+
+```
+
+```{r}
+varImpPlot(bagging_multi, n.var = 10, sort = TRUE, main = "Important variables of multi class classification(Top 10)")
+
+```
+
+
+
+#Random Forest
+
+```{r}
+#performing random forest
+set.seed(1)
+randomforest_multi <- randomForest(alcydays ~ ., data = training_data_multi_clean, mtry =sqrt(ncol(training_data_multi_clean)), ntree = 500, importance = TRUE)
+randomforest_multi
+
+```
+
+
+```{r}
+#predict on the test data
+yhat_randomforest_multi <- predict(randomforest_multi, newdata = testing_data_multi,type='class')
+multi_rf_mse=mean(yhat_randomforest_multi == testing_data_multi$alcydays,na.rm=TRUE)
+```
+
+```{r}
+#Performing importannt variable
+importance_rf_multi <- importance(randomforest_multi)
+top_10 <- head(importance_rf_multi, 10)
+top_10
+
+```
+
+```{r}
+varImpPlot(randomforest_multi, n.var = 10, sort = TRUE, main = "Important variables of multi-class classification(Top 10)")
+
+```
+
+#Boosting
+
+```{r}
+library(gbm)
+
+# Converting alcydays to numeric labels for multinomial boosting
+
+training_data_multi_clean <- na.omit(training_data_multi)
+testing_data_multi_clean <- na.omit(testing_data_multi)
+training_data_multi_clean$alcydays <- droplevels(training_data_multi_clean$alcydays)
+testing_data_multi_clean$alcydays <- factor(testing_data_multi_clean$alcydays,
+                                            levels = levels(training_data_multi_clean$alcydays))
+
+
+label_levels <- levels(training_data_multi_clean$alcydays)
+
+training_data_multi_clean$alcydays_numeric <- as.numeric(training_data_multi_clean$alcydays) - 1
+testing_data_multi_clean$alcydays_numeric <- as.numeric(testing_data_multi_clean$alcydays) - 1
+
+# Fitting the models using multiple shrinkage and depth values
+shrinkage_values <- c(0.01, 0.1, 0.2)
+depth_values <- c(1, 2)
+boosting_results_multi <- list()
+
+for (shrink in shrinkage_values) {
+  for (depth in depth_values) {
+    set.seed(1)
+    model <- gbm(alcydays_numeric ~ . - alcydays - alcydays_numeric,
+                 data = training_data_multi_clean,
+                 distribution = "multinomial",
+                 n.trees = 5000,
+                 interaction.depth = depth,
+                 shrinkage = shrink,
+                 verbose = FALSE)
+
+    probs <- predict(model, newdata = testing_data_multi_clean, n.trees = 5000, type = "response")
+
+    pred_class_index <- apply(probs, 1, which.max)
+
+    pred_factor <- factor(label_levels[pred_class_index], levels = label_levels)
+
+    accuracy <- mean(pred_factor == testing_data_multi_clean$alcydays, na.rm = TRUE)
+
+    model_name <- paste0("shrink_", shrink, "_depth_", depth)
+    boosting_results_multi[[model_name]] <- list(
+      model = model,
+      shrinkage = shrink,
+      depth = depth,
+      accuracy = accuracy
+    )
+  }
+}
+
+for (name in names(boosting_results_multi)) {
+  cat(name, "-> Accuracy:", boosting_results_multi[[name]]$accuracy, "\n")
+}
+
+
+```
+
+```{r}
+# Plotting accuracy comparison across models for multi-class classification
+
+library(ggplot2)
+
+best_boosting_name_multi <- names(boosting_results_multi)[which.max(sapply(boosting_results_multi, function(x) x$accuracy))]
+best_boosting_acc_multi <- boosting_results_multi[[best_boosting_name_multi]]$accuracy
+
+multi_accuracy_df <- data.frame(
+  Model = c("Decision Tree", "Pruned Tree", "Bagging", "Random Forest", paste("Boosting (", best_boosting_name_multi, ")", sep = "")),
+  Accuracy = c(multi_mse, multi_pruned_mse, multi_bag_mse, multi_rf_mse, best_boosting_acc_multi)
+)
+
+ggplot(multi_accuracy_df, aes(x = reorder(Model, Accuracy), y = Accuracy, fill = Model)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = round(Accuracy, 4)), vjust = -0.3, size = 4.5) +
+  labs(title = "Accuracy Comparison Multi-Class Classification",
+       x = "Model",
+       y = "Accuracy") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+
+##REGRESSION
+
+```{r}
+library(dplyr)
+# Filtering the invalid age code of 991 in iralcage
+cleaned_youth_data_subset_reg=df[,c(demographic_cols,youth_experience_cols,'iralcage')]
+cleaned_youth_data_subset_reg <- cleaned_youth_data_subset_reg %>%
+ filter(iralcage != 991)
+nrow(cleaned_youth_data_subset_reg)
+                                              
+```
+
+```{r}
+#Training the dataset
+train=sample(1:nrow(cleaned_youth_data_subset_reg),0.7*nrow(cleaned_youth_data_subset_reg))
+training_data_reg=cleaned_youth_data_subset_reg[train,]
+testing_data_reg=cleaned_youth_data_subset_reg[-train,]
+```
+
+```{r}
+library(tree)
+#Plotting tree
+reg_tree=tree(iralcage ~.,data=training_data_reg)
+plot(reg_tree)
+text(reg_tree,pretty = 0)
+reg_tree
+
+```
+
+```{r}
+#Predict on the test data
+predict_reg=predict(reg_tree,testing_data_reg)
+table(predict_reg,testing_data_reg$iralcage)
+reg_mse=mean((predict_reg-testing_data_reg$iralcage)^2)
+reg_mse
+```
+
+```{r}
+#Performing cross validation
+cv_reg=cv.tree(reg_tree,FUN=prune.tree)
+names(cv_reg)
+cv_reg
+                  
+```
+```{r}
+#Plotting
+par(mfrow = c(1, 2))
+plot(cv_reg$size, cv_reg$dev, type = "b")
+plot(cv_reg$k, cv_reg$dev, type = "b")
+
+```
+
+```{r}
+#To Pruning the regression tree
+prune_reg <- prune.tree(reg_tree, best = 4)
+plot(prune_reg)
+text(prune_reg, pretty = 0)
+
+```
+
+```{r}
+prune_reg
+```
+
+
+```{r}
+#Predict on the test data
+prune_reg_prediction = predict(prune_reg, testing_data_reg)
+table(prune_reg_prediction, testing_data_reg$iralcage)
+pruned_reg_mse=mean((prune_reg_prediction -testing_data_reg$iralcage)^2)
+pruned_reg_mse
+
+```
+```{r}
+#Omitting the missing values
+missing_values=colSums(is.na(training_data_reg))
+missing_values
+```
+
+
+# Bagging
+
+```{r}
+#Perfoming bagging
+library(randomForest)
+training_data_reg_clean=na.omit(training_data_reg)
+bagging_reg <- randomForest(iralcage ~ ., data = training_data_reg_clean,
+     mtry = floor(ncol(training_data_reg_clean)/3), importance = TRUE)
+bagging_reg
+
+```
+
+```{r}
+bagging_reg_prediction = predict(bagging_reg, newdata = testing_data_reg)
+
+reg_bag_mse=mean((bagging_reg_prediction-testing_data_reg$iralcage)^2,na.rm=TRUE)
+reg_bag_mse
+```
+
+```{r}
+#perfom important feature varibless
+importance_bagging_reg <- importance(bagging_reg)
+top_10 <- head(importance_bagging_reg, 10)
+top_10
+
+```
+```{r}
+varImpPlot(bagging_reg, n.var = 10, sort = TRUE, main = "Important variables of reg classification(Top 10)")
+
+```
+
+
+#Random Forest
+
+```{r}
+set.seed(1)
+randomforest_reg <- randomForest(iralcage ~ ., data = training_data_reg_clean, mtry = floor(ncol(training_data_reg_clean)/3), importance = TRUE)
+randomforest_reg
+
+```
+
+```{r}
+# Predict on test data
+yhat_randomforest_reg <- predict(randomforest_reg, newdata = testing_data_reg)
+# Calculate accuracy
+reg_rf_mse=mean((yhat_randomforest_reg -testing_data_reg$iralcage)^2,na.rm=TRUE)
+reg_rf_mse
+```
+
+```{r}
+importance_rf_reg <- importance(randomforest_reg)
+top_10 <- head(importance_rf_reg, 10)
+top_10
+
+```
+
+
+```{r}
+varImpPlot(randomforest_reg, n.var = 10, sort = TRUE, main = "Important variables of reg classification(Top 10)")
+
+```
+
+#Boosting
+
+```{r}
+library(gbm)
+
+training_data_reg_clean <- na.omit(training_data_reg)
+testing_data_reg_clean <- na.omit(testing_data_reg)
+
+#Using different shrinkage and depth values
+
+shrinkage_values <- c(0.01, 0.1, 0.2)
+depth_values <- c(1, 2)
+
+boosting_results_reg <- list()
+
+# Using gaussian distribution for regression in gbm
+
+for (shrink in shrinkage_values) {
+  for (depth in depth_values) {
+    set.seed(1)
+    model <- gbm(iralcage ~ .,
+                 data = training_data_reg_clean,
+                 distribution = "gaussian",
+                 n.trees = 5000,
+                 interaction.depth = depth,
+                 shrinkage = shrink,
+                 verbose = FALSE)
+
+
+    preds <- predict(model, newdata = testing_data_reg_clean, n.trees = 5000)
+    
+#Calculate accuracy
+    
+    mse <- mean((preds - testing_data_reg_clean$iralcage)^2, na.rm = TRUE)
+    
+    model_name <- paste0("shrink_", shrink, "_depth_", depth)
+    boosting_results_reg[[model_name]] <- list(
+      model = model,
+      shrinkage = shrink,
+      depth = depth,
+      mse = mse
+    )
+  }
+}
+
+for (name in names(boosting_results_reg)) {
+  cat(name, "-> MSE:", boosting_results_reg[[name]]$mse, "\n")
+}
+
+```
+
+```{r}
+# Plotting model accuracies for regression
+library(ggplot2)
+
+best_boosting_name <- names(boosting_results_reg)[which.min(sapply(boosting_results_reg, function(x) x$mse))]
+best_boosting_mse <- boosting_results_reg[[best_boosting_name]]$mse
+
+mse_df <- data.frame(
+  Model = c("Decision Tree", "Pruned Tree", "Bagging", "Random Forest", paste("Boosting (", best_boosting_name, ")", sep = "")),
+  MSE = c(reg_mse, pruned_reg_mse, reg_bag_mse, reg_rf_mse, best_boosting_mse)
+)
+
+ggplot(mse_df, aes(x = reorder(Model, -MSE), y = MSE, fill = Model)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = round(MSE, 2)), vjust = -0.3, size = 4.5) +
+  labs(title = "MSE Comparison of Regression ",
+       x = "Model",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+
+
+
+
+
+
+
+
